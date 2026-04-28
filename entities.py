@@ -125,7 +125,7 @@ class Virus(SystemSprite):
         surface.blit(self.image, (self.rect.x, self.rect.y))
 
 class Bullet(sprite.Sprite):
-    def __init__(self, x, y, target_x, target_y, speed=15, color=(0,255,0), radius=6, damage=1, pierce=0):
+    def __init__(self, x, y, target_x, target_y, speed=15, color=(0,0,255), radius=6, damage=1, pierce=0):
         super().__init__()
         self.radius = radius
         self.color = color
@@ -206,3 +206,30 @@ def spawn_boss(level, speed_min, speed_max, window_width, window_height):
     boss_speed = max(1, speed_min - 1)
     boss_hp = 6 + level * 4
     return Boss('virus1.png', x, y, boss_size, boss_size, boss_speed, boss_hp)
+
+
+class Consumable(sprite.Sprite):
+    """A small consumable that heals the core when picked up by the player."""
+    def __init__(self, x, y, radius=12, heal_amount=20, color=(0,200,100)):
+        super().__init__()
+        self.radius = radius
+        self.color = color
+        self.pos_x = float(x)
+        self.pos_y = float(y)
+        self.rect = Rect(int(self.pos_x - radius), int(self.pos_y - radius), radius*2, radius*2)
+        self.heal_amount = heal_amount
+
+    def update(self):
+        # stationary consumable for now
+        pass
+
+    def reset(self, surface):
+        draw.circle(surface, self.color, (int(self.pos_x), int(self.pos_y)), self.radius)
+
+
+def spawn_consumable(window_width, window_height, heal_amount=20):
+    # spawn somewhere on-screen with some padding
+    pad = 60
+    x = randint(pad, max(pad+1, window_width - pad))
+    y = randint(pad, max(pad+1, window_height - pad))
+    return Consumable(x, y, radius=12, heal_amount=heal_amount)
