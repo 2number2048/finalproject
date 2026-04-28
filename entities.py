@@ -15,12 +15,69 @@ class SystemSprite(sprite.Sprite):
         surface.blit(self.image, (self.rect.x, self.rect.y))
 
 class Antivirus(SystemSprite):
+    def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed):
+        # preserve SystemSprite constructor behaviour
+        super().__init__(player_image, player_x, player_y, size_x, size_y, player_speed)
+        # Shooting / upgradeable stats
+        # cooldown in milliseconds between shots (lower is faster)
+        self.shoot_cooldown_ms = 250
+        # time (ms) of last shot; initialize so player can shoot immediately
+        self._last_shot_ms = 0
+        # bullet properties
+        self.bullet_speed = 18
+        self.bullet_damage = 1
+        # number of pellets fired per shot (for spread); 1 = single bullet
+        self.pellets = 1
+        # spread angle degrees across which pellets are spread
+        self.spread_deg = 0
+        # bullets piercing count (how many enemies a bullet can go through)
+        self.bullet_pierce = 0
+
     def update(self):
         keys = key.get_pressed()
         if keys[K_a] and self.rect.x > 5: self.rect.x -= self.speed
         if keys[K_d] and self.rect.x < display.get_window_size()[0] - 70: self.rect.x += self.speed
         if keys[K_w] and self.rect.y > 5: self.rect.y -= self.speed
         if keys[K_s] and self.rect.y < display.get_window_size()[1] - 70: self.rect.y += self.speed
+
+    def can_shoot(self):
+        # returns True if enough time has passed since last shot
+        now = time.get_ticks()
+        return (now - self._last_shot_ms) >= self.shoot_cooldown_ms
+
+    def mark_shot(self):
+        self._last_shot_ms = time.get_ticks()
+
+    def shoot(self, target_x, target_y):
+        """Return a list of Bullet instances produced by a shot at (target_x, target_y)."""
+        shots = []
+        cx, cy = self.rect.centerx, self.rect.centery
+        # base direction
+        dx = target_x - cx
+        dy = target_y - cy
+        base_ang = math.atan2(dy, dx)
+        if self.pellets <= 1 or self.spread_deg <= 0:
+            # single direct shot
+            b = Bullet(cx, cy, target_x, target_y, speed=self.bullet_speed, damage=self.bullet_damage, pierce=self.bullet_pierce)
+            shots.append(b)
+            return shots
+
+        # multi-pellet spread
+        total = self.pellets
+        spread_rad = math.radians(self.spread_deg)
+        # spread symmetric about base angle
+        for i in range(total):
+            # fractional position in spread [-0.5 .. 0.5]
+            if total == 1:
+                frac = 0.0
+            else:
+                frac = (i / (total - 1)) - 0.5
+            ang = base_ang + frac * spread_rad
+            tx = cx + math.cos(ang) * 1000
+            ty = cy + math.sin(ang) * 1000
+            b = Bullet(cx, cy, tx, ty, speed=self.bullet_speed, damage=self.bullet_damage, pierce=self.bullet_pierce)
+            shots.append(b)
+        return shots
 
 class Virus(SystemSprite):
     def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed):
@@ -68,7 +125,7 @@ class Virus(SystemSprite):
         surface.blit(self.image, (self.rect.x, self.rect.y))
 
 class Bullet(sprite.Sprite):
-    def __init__(self, x, y, target_x, target_y, speed=15, color=(0,255,0), radius=6):
+    def __init__(self, x, y, target_x, target_y, speed=15, color=(0,255,0), radius=6, damage=1, pierce=0):
         super().__init__()
         self.radius = radius
         self.color = color
@@ -84,6 +141,11 @@ class Bullet(sprite.Sprite):
             self.vx = dx / dist * speed
             self.vy = dy / dist * speed
         self.rect = Rect(int(self.pos_x - radius), int(self.pos_y - radius), radius*2, radius*2)
+        # combat properties
+        self.damage = damage
+        # number of additional enemies this bullet can hit before being destroyed; 0 = single hit
+        # we treat 'pierce' as how many extra enemies it can go through
+        self.pierce = pierce
 
     def update(self):
         self.pos_x += self.vx
@@ -93,6 +155,13 @@ class Bullet(sprite.Sprite):
 
     def reset(self, surface):
         draw.circle(surface, self.color, (int(self.pos_x), int(self.pos_y)), self.radius)
+
+    def on_hit(self):
+        """Call when this bullet hits an enemy. Returns True if the bullet should be destroyed."""
+        if self.pierce <= 0:
+            return True
+        self.pierce -= 1
+        return False
 
 class Boss(Virus):
     def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed, hp):

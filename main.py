@@ -3,6 +3,8 @@ from pygame import *
 init()
 from random import randint, uniform
 import math
+from entities import Antivirus, SystemSprite, Virus, Bullet, Boss, spawn_virus, spawn_boss
+import entities
 
 # --- Setup ---
 window_width = 1372
@@ -25,171 +27,12 @@ background = transform.scale(image.load('windowdesktop.jpg'), (window_width, win
 VIRUS_SPEED_MIN = 2
 VIRUS_SPEED_MAX = 4
 
-# --- Classes ---
-class SystemSprite(sprite.Sprite):
-    def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed):
-        super().__init__()
-        self.image = transform.scale(image.load(player_image), (size_x, size_y))
-        self.speed = player_speed
-        self.rect = self.image.get_rect()
-        self.rect.x = player_x
-        self.rect.y = player_y
-    def reset(self):
-        window.blit(self.image, (self.rect.x, self.rect.y))
-
-class Antivirus(SystemSprite):
-    def update(self):
-        keys = key.get_pressed()
-        if keys[K_a] and self.rect.x > 5: self.rect.x -= self.speed
-        if keys[K_d] and self.rect.x < window_width - 70: self.rect.x += self.speed
-        if keys[K_w] and self.rect.y > 5: self.rect.y -= self.speed
-        if keys[K_s] and self.rect.y < window_height - 70: self.rect.y += self.speed
-
-class Virus(SystemSprite):
-    def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed):
-        super().__init__(player_image, player_x, player_y, size_x, size_y, player_speed)
-        # position tracked as center
-        self.pos_x = float(self.rect.centerx)
-        self.pos_y = float(self.rect.centery)
-
-        # initial velocity (random direction)
-        ang = math.radians(randint(0, 359))
-        self.vx = math.cos(ang) * self.speed
-        self.vy = math.sin(ang) * self.speed
-
-        # steering parameters (per-virus randomized slightly)
-        self.homing_strength = uniform(0.06, 0.18)  # how strongly it steers toward the core each frame
-        self.jitter = uniform(0.6, 1.8)            # randomness multiplier
-        self.turn_noise_prob = uniform(0.04, 0.12) # small chance per frame to apply a random turn
-
-    def update(self, target_x, target_y):
-        # steering toward target
-        dx = target_x - self.pos_x
-        dy = target_y - self.pos_y
-        dist = math.hypot(dx, dy)
-        if dist == 0:
-            return
-
-        desired_x = dx / dist
-        desired_y = dy / dist
-
-        # random jitter vector
-        rx = uniform(-1.0, 1.0) * self.jitter
-        ry = uniform(-1.0, 1.0) * self.jitter
-
-        # combine current velocity, homing pull, and random jitter
-        new_vx = self.vx + desired_x * (self.homing_strength * self.speed) + rx
-        new_vy = self.vy + desired_y * (self.homing_strength * self.speed) + ry
-
-        # occasionally apply a stronger random turn
-        if uniform(0.0, 1.0) < self.turn_noise_prob:
-            turn_ang = math.radians(uniform(-60, 60))
-            cos_t = math.cos(turn_ang)
-            sin_t = math.sin(turn_ang)
-            tvx = new_vx * cos_t - new_vy * sin_t
-            tvy = new_vx * sin_t + new_vy * cos_t
-            new_vx, new_vy = tvx, tvy
-
-        # normalize to maintain speed magnitude
-        mag = math.hypot(new_vx, new_vy)
-        if mag != 0:
-            self.vx = new_vx / mag * self.speed
-            self.vy = new_vy / mag * self.speed
-
-        # update position
-        self.pos_x += self.vx
-        self.pos_y += self.vy
-
-        # write back to rect (center)
-        self.rect.centerx = int(self.pos_x)
-        self.rect.centery = int(self.pos_y)
-
-
-class Bullet(sprite.Sprite):
-    """Simple bullet that travels toward a target and can hit viruses."""
-    def __init__(self, x, y, target_x, target_y, speed=15, color=(0,255,0), radius=6):
-        super().__init__()
-        self.radius = radius
-        self.color = color
-        self.pos_x = float(x)
-        self.pos_y = float(y)
-        dx = target_x - x
-        dy = target_y - y
-        dist = math.hypot(dx, dy)
-        if dist == 0:
-            self.vx = 0
-            self.vy = 0
-        else:
-            self.vx = dx / dist * speed
-            self.vy = dy / dist * speed
-        # rect used for collision detection
-        self.rect = Rect(int(self.pos_x - radius), int(self.pos_y - radius), radius*2, radius*2)
-
-    def update(self):
-        self.pos_x += self.vx
-        self.pos_y += self.vy
-        self.rect.x = int(self.pos_x - self.radius)
-        self.rect.y = int(self.pos_y - self.radius)
-
-    def reset(self):
-        draw.circle(window, self.color, (int(self.pos_x), int(self.pos_y)), self.radius)
-
-
-class Boss(Virus):
-    """A boss variant that has HP and a larger sprite."""
-    def __init__(self, player_image, player_x, player_y, size_x, size_y, player_speed, hp):
-        # call Virus init to set up movement
-        super().__init__(player_image, player_x, player_y, size_x, size_y, player_speed)
-        self.hp = hp
-        self.max_hp = hp
-        self.is_boss = True
-
-    def reset(self):
-        # draw the boss image
-        window.blit(self.image, (self.rect.x, self.rect.y))
-        # draw a small HP bar above the boss
-        bar_w = max(40, self.rect.width)
-        bar_h = 8
-        bar_x = self.rect.centerx - bar_w // 2
-        bar_y = self.rect.top - bar_h - 6
-        draw.rect(window, (80, 0, 0), (bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2))
-        fill_w = int(bar_w * max(0, min(self.hp / self.max_hp, 1.0)))
-        draw.rect(window, (200, 0, 0), (bar_x, bar_y, bar_w, bar_h))
-        draw.rect(window, (0, 200, 0), (bar_x, bar_y, fill_w, bar_h))
-
-def spawn_virus():
-    side = randint(1, 4)
-    x, y = 0, 0
-    if side == 1: x, y = randint(0, window_width), -70
-    elif side == 2: x, y = randint(0, window_width), window_height + 70
-    elif side == 3: x, y = -70, randint(0, window_height)
-    else: x, y = window_width + 70, randint(0, window_height)
-    # choose speed based on current level range
-    speed = randint(VIRUS_SPEED_MIN, VIRUS_SPEED_MAX)
-    return Virus('virus1.png', x, y, 65, 65, speed)
-
-
-def spawn_boss():
-    # spawn the boss from a random side
-    side = randint(1, 4)
-    if side == 1:
-        x, y = randint(0, window_width), -150
-    elif side == 2:
-        x, y = randint(0, window_width), window_height + 150
-    elif side == 3:
-        x, y = -150, randint(0, window_height)
-    else:
-        x, y = window_width + 150, randint(0, window_height)
-    # boss stats scale with level
-    boss_size = 140
-    # make boss a bit slower than regular viruses
-    boss_speed = max(1, VIRUS_SPEED_MIN - 1)
-    boss_hp = 6 + LEVEL * 4
-    b = Boss('virus1.png', x, y, boss_size, boss_size, boss_speed, boss_hp)
-    return b
+# Use classes and spawn helpers from the `entities` module. The local definitions were removed
+# to avoid shadowing the imported classes (Antivirus, Virus, Bullet, Boss) and spawn functions.
 
 # --- Game Objects ---
-antivirus = Antivirus('antivirus.png', 686, 386, 65, 65, 7)
+# instantiate Antivirus from the entities module to ensure upgrade methods are present
+antivirus = entities.Antivirus('antivirus.png', 686, 386, 65, 65, 7)
 core = SystemSprite('core.png', 625, 450, 125, 125, 0)
 viruses = sprite.Group()
 for i in range(5):
@@ -250,7 +93,45 @@ BULLET_DAMAGE = 1
 # --- Game States ---
 MENU = 0
 GAME = 1
+UPGRADE = 2
 state = MENU
+
+# Upgrade UI state
+upgrade_choices = []
+upgrade_buttons = []
+upgrade_pending = False
+
+def prepare_upgrades_for_level(level):
+    """Return a list of 3 upgrade dicts appropriate for the level."""
+    pool = [
+        {'key': 'faster_fire', 'title': 'Faster Fire', 'desc': 'Reduce cooldown by 50ms'},
+        {'key': 'more_damage', 'title': 'Increased Damage', 'desc': '+1 bullet damage'},
+        {'key': 'bullet_speed', 'title': 'Bullet Speed', 'desc': '+2 bullet speed'},
+        {'key': 'spread_shot', 'title': 'Spread Shot', 'desc': '+1 pellet (wider spread)'},
+        {'key': 'pierce', 'title': 'Piercing Rounds', 'desc': '+1 pierce per bullet'},
+    ]
+    # simple selection: choose 3 unique entries pseudo-randomly based on level
+    chosen = []
+    tries = list(range(len(pool)))
+    # deterministic-ish variation
+    import random
+    random.shuffle(tries)
+    for i in range(3):
+        chosen.append(pool[tries[i]])
+    return chosen
+
+def apply_upgrade_choice(av, choice_key):
+    if choice_key == 'faster_fire':
+        av.shoot_cooldown_ms = max(50, av.shoot_cooldown_ms - 50)
+    elif choice_key == 'more_damage':
+        av.bullet_damage += 1
+    elif choice_key == 'bullet_speed':
+        av.bullet_speed += 2
+    elif choice_key == 'spread_shot':
+        av.pellets = min(7, av.pellets + 1)
+        av.spread_deg = min(60, av.spread_deg + 8)
+    elif choice_key == 'pierce':
+        av.bullet_pierce += 1
 
 run = True
 FPS = 60
@@ -291,11 +172,14 @@ while run:
                 # start timer for this run
                 game_start_ticks = time.get_ticks()
                 elapsed_seconds = 0.0
-        # Shooting: left mouse click spawns a bullet when in GAME
+        # Shooting: left mouse click handled by Antivirus upgrades when in GAME
         if e.type == MOUSEBUTTONDOWN and state == GAME:
-            bx, by = antivirus.rect.centerx, antivirus.rect.centery
             tx, ty = mouse_pos
-            bullets.add(Bullet(bx, by, tx, ty, speed=18, color=CYAN, radius=6))
+            if antivirus.can_shoot():
+                shots = antivirus.shoot(tx, ty)
+                for s in shots:
+                    bullets.add(s)
+                antivirus.mark_shot()
         # Timer-based spawn event
         if e.type == SPAWN_EVENT and state == GAME:
             # only spawn while we haven't spawned the total for this level
@@ -417,22 +301,29 @@ while run:
             else:
                 b.reset()
 
-        # Bullet-virus collision: bullets always removed; viruses take damage if boss, otherwise die
-        collisions = sprite.groupcollide(viruses, bullets, False, True)
+        # Bullet-virus collision: bullets may pierce so we manage bullet lifetimes manually
+        collisions = sprite.groupcollide(viruses, bullets, False, False)
         for v, blist in collisions.items():
-            hits = len(blist)
-            if getattr(v, 'is_boss', False):
-                # boss takes damage per bullet
-                v.hp -= BULLET_DAMAGE * hits
-                print(f"[combat] boss hit x{hits}, hp={v.hp}/{v.max_hp}")
-                if v.hp <= 0:
-                    # boss defeated
+            for b in blist:
+                # apply damage to boss or remove normal virus
+                if getattr(v, 'is_boss', False):
+                    v.hp -= getattr(b, 'damage', BULLET_DAMAGE)
+                    print(f"[combat] boss hit, hp={v.hp}/{v.max_hp}")
+                    if v.hp <= 0:
+                        v.kill()
+                        boss_active = False
+                        # mark that an upgrade should be offered before next level
+                        upgrade_pending = True
+                else:
+                    # normal virus dies on any hit
                     v.kill()
-                    boss_active = False
-                    boss_spawned = True
-            else:
-                # normal viruses die from any bullet hits
-                v.kill()
+                # manage bullet pierce - if on_hit returns True bullet dies
+                if getattr(b, 'on_hit', None) is not None:
+                    if b.on_hit():
+                        b.kill()
+                else:
+                    # fallback: remove bullet after one hit
+                    b.kill()
 
         # If viruses touch the player, handle boss instant-loss or normal damage
         player_hits = sprite.spritecollide(antivirus, viruses, False)
@@ -493,24 +384,86 @@ while run:
 
         # If boss was spawned and now there are no viruses, boss defeated -> advance level
         if boss_spawned and not boss_active and len(viruses) == 0 and state == GAME:
-            LEVEL += 1
-            # prepare next level
-            level_total_enemies = enemies_for_level(LEVEL)
-            level_spawned = 0
-            boss_spawned = False
-            # make gameplay progressively harder
-            VIRUS_SPAWN_INTERVAL_MS = max(350, VIRUS_SPAWN_INTERVAL_MS - 150)
-            VIRUS_SPEED_MIN += 1
-            VIRUS_SPEED_MAX += 1
-            MAX_VIRUSES = min(100, MAX_VIRUSES + 5)
-            # apply new timer
-            time.set_timer(SPAWN_EVENT, VIRUS_SPAWN_INTERVAL_MS)
-            # spawn an initial small batch for the new level
-            initial = min(5, level_total_enemies)
-            for i in range(initial):
-                viruses.add(spawn_virus())
-            level_spawned = initial
-            print(f"Level up! Now level {LEVEL} - enemies={level_total_enemies}, spawn_ms={VIRUS_SPAWN_INTERVAL_MS}, speed={VIRUS_SPEED_MIN}-{VIRUS_SPEED_MAX}")
+            if upgrade_pending:
+                # pause game and show upgrade choices
+                upgrade_choices = prepare_upgrades_for_level(LEVEL)
+                upgrade_buttons = []
+                # create rectangles for 3 buttons centered on screen
+                btn_w = 520
+                btn_h = 80
+                gap = 20
+                total_h = btn_h * 3 + gap * 2
+                start_y = window_height//2 - total_h//2
+                for i, choice in enumerate(upgrade_choices):
+                    rect = Rect(window_width//2 - btn_w//2, start_y + i * (btn_h + gap), btn_w, btn_h)
+                    upgrade_buttons.append(rect)
+                state = UPGRADE
+                upgrade_pending = False
+            else:
+                LEVEL += 1
+                # prepare next level
+                level_total_enemies = enemies_for_level(LEVEL)
+                level_spawned = 0
+                boss_spawned = False
+                # make gameplay progressively harder
+                VIRUS_SPAWN_INTERVAL_MS = max(350, VIRUS_SPAWN_INTERVAL_MS - 150)
+                VIRUS_SPEED_MIN += 1
+                VIRUS_SPEED_MAX += 1
+                MAX_VIRUSES = min(100, MAX_VIRUSES + 5)
+                # apply new timer
+                time.set_timer(SPAWN_EVENT, VIRUS_SPAWN_INTERVAL_MS)
+                # spawn an initial small batch for the new level
+                initial = min(5, level_total_enemies)
+                for i in range(initial):
+                    viruses.add(spawn_virus())
+                level_spawned = initial
+                print(f"Level up! Now level {LEVEL} - enemies={level_total_enemies}, spawn_ms={VIRUS_SPAWN_INTERVAL_MS}, speed={VIRUS_SPEED_MIN}-{VIRUS_SPEED_MAX}")
+
+    elif state == UPGRADE:
+        # draw a dimmed background and upgrade choices
+        window.fill((10, 10, 20))
+        title = font_main.render("UPGRADE AVAILABLE", True, CYAN)
+        window.blit(title, (window_width//2 - title.get_width()//2, 120))
+        desc = font_sub.render("Choose one upgrade to enhance your antivirus", True, WHITE)
+        window.blit(desc, (window_width//2 - desc.get_width()//2, 200))
+
+        # draw buttons
+        for i, rect in enumerate(upgrade_buttons):
+            # hover effect
+            color = (40, 40, 80) if rect.collidepoint(mouse_pos) else (30, 30, 60)
+            draw.rect(window, color, rect)
+            draw.rect(window, (200,200,200), rect, 2)
+            choice = upgrade_choices[i]
+            t = font_sub.render(choice['title'], True, WHITE)
+            s = font_sub.render(choice['desc'], True, CYAN)
+            window.blit(t, (rect.x + 18, rect.y + 12))
+            window.blit(s, (rect.x + 18, rect.y + 44))
+
+        # handle click on upgrade buttons
+        if mouse.get_pressed()[0]:
+            # check which button clicked
+            for i, rect in enumerate(upgrade_buttons):
+                if rect.collidepoint(mouse_pos):
+                    choice = upgrade_choices[i]
+                    apply_upgrade_choice(antivirus, choice['key'])
+                    # after selection, advance level as if boss defeated
+                    LEVEL += 1
+                    level_total_enemies = enemies_for_level(LEVEL)
+                    level_spawned = 0
+                    boss_spawned = False
+                    # make gameplay progressively harder
+                    VIRUS_SPAWN_INTERVAL_MS = max(350, VIRUS_SPAWN_INTERVAL_MS - 150)
+                    VIRUS_SPEED_MIN += 1
+                    VIRUS_SPEED_MAX += 1
+                    MAX_VIRUSES = min(100, MAX_VIRUSES + 5)
+                    time.set_timer(SPAWN_EVENT, VIRUS_SPAWN_INTERVAL_MS)
+                    initial = min(5, level_total_enemies)
+                    for j in range(initial):
+                        viruses.add(spawn_virus())
+                    level_spawned = initial
+                    print(f"Applied upgrade: {choice['title']} - new stats: cooldown={antivirus.shoot_cooldown_ms} damage={antivirus.bullet_damage} speed={antivirus.bullet_speed} pellets={antivirus.pellets} pierce={antivirus.bullet_pierce}")
+                    state = GAME
+                    break
 
 
     display.update()
